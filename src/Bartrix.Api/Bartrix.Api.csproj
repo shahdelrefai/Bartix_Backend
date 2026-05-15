@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <ItemGroup>
+    <ProjectReference Include="..\Bartrix.SharedKernel\Bartrix.SharedKernel.csproj" />
+    <ProjectReference Include="..\Bartrix.BuildingBlocks\Bartrix.BuildingBlocks.csproj" />
+    <ProjectReference Include="..\Modules\Auth\Bartrix.Modules.Auth.csproj" />
+    <ProjectReference Include="..\Modules\Profiles\Bartrix.Modules.Profiles.csproj" />
+    <ProjectReference Include="..\Modules\Listings\Bartrix.Modules.Listings.csproj" />
+    <ProjectReference Include="..\Modules\Trades\Bartrix.Modules.Trades.csproj" />
+    <ProjectReference Include="..\Modules\Messaging\Bartrix.Modules.Messaging.csproj" />
+    <ProjectReference Include="..\Modules\Reputation\Bartrix.Modules.Reputation.csproj" />
+    <ProjectReference Include="..\Modules\Services\Bartrix.Modules.Services.csproj" />
+    <ProjectReference Include="..\Modules\Search\Bartrix.Modules.Search.csproj" />
+    <ProjectReference Include="..\Modules\Delivery\Bartrix.Modules.Delivery.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="8.0.26" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UserSecretsId>Bartrix.Api-1fcb2c31-8e90-4ce3-9ce8-88db7514519b</UserSecretsId>
+  </PropertyGroup>
+
+</Project>

@@ -1,0 +1,10 @@
+.DS_Store
+.dotnet/
+.idea/
+
+bin/
+obj/
+
+TestResults/
+*.user
+*.suo

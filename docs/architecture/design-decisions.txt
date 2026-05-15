@@ -1,0 +1,47 @@
+Bartrix Design Decisions
+========================
+
+1. Modular monolith instead of microservices
+Reason: the product is still evolving, and a modular monolith keeps delivery, testing, and debugging simpler while preserving clean extraction paths later.
+
+2. Backend-only solution for the first phase
+Reason: the current goal is to establish the server-side foundation before starting client work.
+
+3. .NET 8 as the target runtime
+Reason: .NET 8 is the current long-term support baseline and is a safer foundation than staying on .NET 6.
+
+4. One module per core business area
+Reason: explicit module boundaries reduce coupling and make later extraction or independent ownership easier.
+
+5. One PostgreSQL database with one schema per module
+Reason: schema isolation gives stronger boundaries without adding the operational cost of multiple databases.
+
+6. Neon PostgreSQL as the primary relational database
+Reason: it is the agreed production database target for transactional data.
+
+7. EF Core migrations for schema management
+Reason: code-first migrations fit the .NET stack and support incremental development.
+
+8. Backend-managed authentication
+Reason: Firebase is out of scope, and identity must be fully owned by the Bartrix backend.
+
+9. Email/password plus phone sign-in with OTP verification
+Reason: both standard credential login and verified phone ownership are required for the product.
+
+10. JWT access tokens with refresh tokens
+Reason: mobile-friendly stateless access control still needs controlled long-lived sessions.
+
+11. Provider-agnostic OTP adapter
+Reason: there is no truly free production-grade phone verification option, so the design should allow a mock provider in development and a paid SMS provider later.
+
+12. Local MinIO for object storage
+Reason: it gives an S3-like local image storage target for development without external cloud dependency.
+
+13. SignalR for realtime communication
+Reason: chat and live trade updates are first-class features and fit naturally with ASP.NET Core SignalR.
+
+14. BuildingBlocks reserved for technical concerns only
+Reason: shared business logic in infrastructure layers leads to coupling and weak module ownership.
+
+15. Runtime secrets stay out of tracked configuration
+Reason: Neon credentials, JWT signing keys, and MinIO credentials should be loaded from user secrets or environment variables instead of source control.
