@@ -10,9 +10,6 @@ RUN dotnet publish "src/Bartrix.Api/Bartrix.Api.csproj" \
 FROM mcr.microsoft.com/dotnet/aspnet:8.0 AS runtime
 WORKDIR /app
 
-RUN adduser --disabled-password --no-create-home app
-USER app
-
 COPY --from=build /app/publish .
 
 ENV ASPNETCORE_HTTP_PORTS=8080
