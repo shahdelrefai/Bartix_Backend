@@ -8,7 +8,11 @@ public sealed class ConversationMessage
 
     public Guid SenderUserId { get; private set; }
 
-    public string Body { get; private set; }
+    public string? Body { get; private set; }
+
+    public string? ImageUrl { get; private set; }
+
+    public bool IsRead { get; private set; }
 
     public DateTimeOffset CreatedAtUtc { get; private set; }
 
@@ -16,14 +20,19 @@ public sealed class ConversationMessage
 
     private ConversationMessage()
     {
-        Body = string.Empty;
     }
 
-    public ConversationMessage(Guid conversationId, Guid senderUserId, string body, DateTimeOffset createdAtUtc)
+    public ConversationMessage(Guid conversationId, Guid senderUserId, string? body, string? imageUrl, DateTimeOffset createdAtUtc)
     {
         ConversationId = conversationId;
         SenderUserId = senderUserId;
         Body = body;
+        ImageUrl = imageUrl;
         CreatedAtUtc = createdAtUtc;
+    }
+
+    public void MarkRead()
+    {
+        IsRead = true;
     }
 }

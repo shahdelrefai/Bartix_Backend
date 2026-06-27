@@ -110,14 +110,15 @@ public sealed class ServicesService : IServicesService
 
     public async Task<PagedServiceOffersResponse> BrowseAsync(ServicesQuery query, CancellationToken cancellationToken)
     {
-        var page = query.Page <= 0 ? 1 : query.Page;
-        var pageSize = query.PageSize <= 0 ? 20 : Math.Min(query.PageSize, 100);
+        var page = query.Page.GetValueOrDefault(1) <= 0 ? 1 : query.Page.GetValueOrDefault(1);
+        var requestedPageSize = query.PageSize.GetValueOrDefault(20);
+        var pageSize = requestedPageSize <= 0 ? 20 : Math.Min(requestedPageSize, 100);
 
         var serviceOffers = _dbContext.ServiceOffers
             .AsNoTracking()
             .AsQueryable();
 
-        if (query.OnlyActive)
+        if (query.OnlyActive ?? true)
         {
             serviceOffers = serviceOffers.Where(x => x.IsActive);
         }

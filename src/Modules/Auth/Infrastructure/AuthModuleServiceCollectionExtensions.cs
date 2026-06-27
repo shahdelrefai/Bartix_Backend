@@ -19,6 +19,8 @@ public static class AuthModuleServiceCollectionExtensions
         });
 
         services.AddScoped<IAuthService, AuthService>();
+        services.AddOptions<GoogleAuthOptions>();
+        services.AddHttpClient<IGoogleTokenValidator, GoogleTokenValidator>();
         services.AddSingleton<IPasswordHasher, Pbkdf2PasswordHasher>();
         services.AddSingleton<IJwtTokenService, JwtTokenService>();
         services.AddSingleton<IRefreshTokenService, RefreshTokenService>();
@@ -26,7 +28,9 @@ public static class AuthModuleServiceCollectionExtensions
             new LocalMockOtpProvider(
                 sp.GetRequiredService<IOptions<OtpOptions>>().Value,
                 sp.GetRequiredService<TimeProvider>()));
+        services.AddSingleton<IEmailOtpService, InMemoryEmailOtpService>();
         services.AddSingleton<IDatabaseInitializer, AuthDatabaseInitializer>();
+        services.AddHostedService<PremiumExpirationHostedService>();
 
         return services;
     }

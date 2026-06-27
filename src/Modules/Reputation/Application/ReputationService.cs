@@ -97,6 +97,69 @@ public sealed class ReputationService : IReputationService
             recentReviews.Select(Map).ToList());
     }
 
+    public async Task<ReviewResponse> CreateUserReviewAsync(
+        Guid reviewerUserId,
+        Guid targetUserId,
+        CreateUserReviewRequest request,
+        CancellationToken cancellationToken)
+    {
+        if (request.Rating < 1 || request.Rating > 5)
+        {
+            throw new ReputationValidationException("Rating must be between 1 and 5.");
+        }
+
+        if (reviewerUserId == targetUserId)
+        {
+            throw new ReputationValidationException("You cannot review yourself.");
+        }
+
+        var title = NormalizeTitle(request.Title);
+        var content = NormalizeComment(request.Content);
+        var reviewerName = string.IsNullOrWhiteSpace(request.ReviewerName) ? null : request.ReviewerName.Trim();
+
+        var review = new ReputationReview(
+            tradeProposalId: null,
+            reviewerUserId,
+            targetUserId,
+            request.Rating,
+            content,
+            _timeProvider.GetUtcNow(),
+            reviewerName,
+            title);
+
+        _dbContext.Reviews.Add(review);
+        await _dbContext.SaveChangesAsync(cancellationToken);
+
+        return Map(review);
+    }
+
+    public async Task<IReadOnlyList<ReviewResponse>> GetUserReviewsAsync(Guid userId, CancellationToken cancellationToken)
+    {
+        var reviews = await _dbContext.Reviews
+            .AsNoTracking()
+            .Where(x => x.RevieweeUserId == userId)
+            .OrderByDescending(x => x.CreatedAtUtc)
+            .ToListAsync(cancellationToken);
+
+        return reviews.Select(Map).ToList();
+    }
+
+    private static string? NormalizeTitle(string? title)
+    {
+        if (string.IsNullOrWhiteSpace(title))
+        {
+            return null;
+        }
+
+        var normalized = title.Trim();
+        if (normalized.Length > 200)
+        {
+            throw new ReputationValidationException("Title cannot exceed 200 characters.");
+        }
+
+        return normalized;
+    }
+
     private static string? NormalizeComment(string? comment)
     {
         if (string.IsNullOrWhiteSpace(comment))
@@ -122,6 +185,8 @@ public sealed class ReputationService : IReputationService
             review.RevieweeUserId,
             review.Rating,
             review.Comment,
-            review.CreatedAtUtc);
+            review.CreatedAtUtc,
+            review.ReviewerName,
+            review.Title);
     }
 }

@@ -11,4 +11,13 @@ public interface IReputationService
         CancellationToken cancellationToken);
 
     Task<ReputationSummaryResponse> GetUserReputationAsync(Guid userId, CancellationToken cancellationToken);
+
+    // ─── Direct user-to-user reviews ────────────────────────────────────
+    Task<ReviewResponse> CreateUserReviewAsync(
+        Guid reviewerUserId,
+        Guid targetUserId,
+        CreateUserReviewRequest request,
+        CancellationToken cancellationToken);
+
+    Task<IReadOnlyList<ReviewResponse>> GetUserReviewsAsync(Guid userId, CancellationToken cancellationToken);
 }

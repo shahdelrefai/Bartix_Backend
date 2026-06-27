@@ -19,7 +19,7 @@ public sealed class AuthServiceTests
             new RegisterRequest("user@example.com", "Pass123!", "Test User", "+201001112223"),
             CancellationToken.None);
 
-        Assert.NotEqual(Guid.Empty, response.User.UserId);
+        Assert.NotEqual(Guid.Empty, response.User.Id);
         Assert.Equal("user@example.com", response.User.Email);
         Assert.False(string.IsNullOrWhiteSpace(response.AccessToken));
         Assert.False(string.IsNullOrWhiteSpace(response.RefreshToken));
@@ -66,6 +66,60 @@ public sealed class AuthServiceTests
 
         Assert.NotEqual(registerResponse.RefreshToken, refreshed.RefreshToken);
         Assert.True(await dbContext.RefreshTokenSessions.CountAsync() >= 2);
+    }
+
+    [Fact]
+    public async Task RegisterAsync_GrantsAdminRole_WhenEmailWhitelisted()
+    {
+        await using var dbContext = CreateDbContext();
+        dbContext.AdminWhitelist.Add(new Domain.AdminWhitelistEntry(
+            "ADMIN@EXAMPLE.COM", null, new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero)));
+        await dbContext.SaveChangesAsync();
+        var service = CreateService(dbContext);
+
+        var response = await service.RegisterAsync(
+            new RegisterRequest("admin@example.com", "Pass123!", "Admin User", null),
+            CancellationToken.None);
+
+        Assert.Equal("admin", response.User.Role);
+    }
+
+    [Fact]
+    public async Task UpdateProfileAsync_UpdatesNameAvatarAndTwoFactor()
+    {
+        await using var dbContext = CreateDbContext();
+        var service = CreateService(dbContext);
+        var registered = await service.RegisterAsync(
+            new RegisterRequest("p@example.com", "Pass123!", "Original", null),
+            CancellationToken.None);
+
+        var updated = await service.UpdateProfileAsync(
+            registered.User.Id,
+            new UpdateProfileRequest("New Name", "https://cdn/avatar.png", true),
+            CancellationToken.None);
+
+        Assert.Equal("New Name", updated.Name);
+        Assert.Equal("https://cdn/avatar.png", updated.ProfileImageUrl);
+        Assert.True(updated.Is2faEnabled);
+    }
+
+    [Fact]
+    public async Task BlockAndUnblock_AreReflectedInProfile()
+    {
+        await using var dbContext = CreateDbContext();
+        var service = CreateService(dbContext);
+        var me = (await service.RegisterAsync(
+            new RegisterRequest("me@example.com", "Pass123!", "Me", null), CancellationToken.None)).User;
+        var other = (await service.RegisterAsync(
+            new RegisterRequest("other@example.com", "Pass123!", "Other", null), CancellationToken.None)).User;
+
+        await service.BlockUserAsync(me.Id, other.Id, CancellationToken.None);
+        var afterBlock = await service.GetMeAsync(me.Id, CancellationToken.None);
+        Assert.Contains(other.Id, afterBlock!.BlockedUserIds);
+
+        await service.UnblockUserAsync(me.Id, other.Id, CancellationToken.None);
+        var afterUnblock = await service.GetMeAsync(me.Id, CancellationToken.None);
+        Assert.DoesNotContain(other.Id, afterUnblock!.BlockedUserIds);
     }
 
     [Fact]
@@ -119,6 +173,7 @@ public sealed class AuthServiceTests
             new JwtTokenService(jwtOptions),
             new RefreshTokenService(refreshOptions),
             new LocalMockOtpProvider(otpOptions, new FixedTimeProvider()),
+            new StubGoogleTokenValidator(),
             Options.Create(otpOptions),
             new FixedTimeProvider());
     }
@@ -128,5 +183,11 @@ public sealed class AuthServiceTests
         private static readonly DateTimeOffset FixedUtcNow = new(2026, 5, 7, 20, 0, 0, TimeSpan.Zero);
 
         public override DateTimeOffset GetUtcNow() => FixedUtcNow;
+    }
+
+    private sealed class StubGoogleTokenValidator : IGoogleTokenValidator
+    {
+        public Task<GoogleUserInfo?> ValidateAsync(string idToken, CancellationToken cancellationToken) =>
+            Task.FromResult<GoogleUserInfo?>(null);
     }
 }

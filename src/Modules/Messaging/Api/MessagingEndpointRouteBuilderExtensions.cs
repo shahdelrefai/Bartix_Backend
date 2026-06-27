@@ -49,6 +49,52 @@ public static class MessagingEndpointRouteBuilderExtensions
             return Results.Ok(response);
         });
 
+        // ─── Direct (non-trade) conversations ───────────────────────────
+        group.MapPost("/conversations/with/{otherUserId:guid}", async (
+            ClaimsPrincipal principal,
+            Guid otherUserId,
+            IMessagingService messagingService,
+            CancellationToken cancellationToken) =>
+        {
+            var userId = GetUserId(principal);
+            var response = await messagingService.GetOrCreateDirectConversationAsync(userId, otherUserId, cancellationToken);
+            return Results.Ok(response);
+        });
+
+        group.MapGet("/conversations/{conversationId:guid}", async (
+            ClaimsPrincipal principal,
+            Guid conversationId,
+            IMessagingService messagingService,
+            CancellationToken cancellationToken) =>
+        {
+            var userId = GetUserId(principal);
+            var response = await messagingService.GetConversationAsync(userId, conversationId, cancellationToken);
+            return Results.Ok(response);
+        });
+
+        group.MapPost("/conversations/{conversationId:guid}", async (
+            ClaimsPrincipal principal,
+            Guid conversationId,
+            SendMessageRequest request,
+            IMessagingService messagingService,
+            CancellationToken cancellationToken) =>
+        {
+            var userId = GetUserId(principal);
+            var response = await messagingService.SendConversationMessageAsync(userId, conversationId, request, cancellationToken);
+            return Results.Ok(response);
+        });
+
+        group.MapPost("/conversations/{conversationId:guid}/read", async (
+            ClaimsPrincipal principal,
+            Guid conversationId,
+            IMessagingService messagingService,
+            CancellationToken cancellationToken) =>
+        {
+            var userId = GetUserId(principal);
+            await messagingService.MarkConversationReadAsync(userId, conversationId, cancellationToken);
+            return Results.NoContent();
+        });
+
         return app;
     }
 

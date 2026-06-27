@@ -28,5 +28,16 @@ public sealed class DeliveryDbContext : DbContext
             builder.Property(x => x.UpdatedAtUtc).IsRequired();
             builder.HasIndex(x => x.TradeProposalId).IsUnique();
         });
+    
+        ApplySnakeCaseColumnNames(modelBuilder);
+}
+    private static void ApplySnakeCaseColumnNames(ModelBuilder modelBuilder)
+    {
+        foreach (var entity in modelBuilder.Model.GetEntityTypes())
+            foreach (var property in entity.GetProperties())
+                property.SetColumnName(string.Concat(
+                    property.Name.Select((c, i) =>
+                        i > 0 && char.IsUpper(c) ? "_" + char.ToLower(c) : char.ToLower(c).ToString())));
     }
+
 }

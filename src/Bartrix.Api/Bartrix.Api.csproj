@@ -12,10 +12,18 @@
     <ProjectReference Include="..\Modules\Services\Bartrix.Modules.Services.csproj" />
     <ProjectReference Include="..\Modules\Search\Bartrix.Modules.Search.csproj" />
     <ProjectReference Include="..\Modules\Delivery\Bartrix.Modules.Delivery.csproj" />
+    <ProjectReference Include="..\Modules\Notifications\Bartrix.Modules.Notifications.csproj" />
+    <ProjectReference Include="..\Modules\Reports\Bartrix.Modules.Reports.csproj" />
+    <ProjectReference Include="..\Modules\Categories\Bartrix.Modules.Categories.csproj" />
+    <ProjectReference Include="..\Modules\Wallet\Bartrix.Modules.Wallet.csproj" />
+    <ProjectReference Include="..\Modules\Admin\Bartrix.Modules.Admin.csproj" />
+    <ProjectReference Include="..\Modules\Withdrawals\Bartrix.Modules.Withdrawals.csproj" />
+    <ProjectReference Include="..\Modules\Payments\Bartrix.Modules.Payments.csproj" />
   </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="8.0.26" />
+    <PackageReference Include="AWSSDK.S3" Version="3.7.414.1" />
   </ItemGroup>
 
   <PropertyGroup>

@@ -16,6 +16,14 @@ public static class DeliveryEndpointRouteBuilderExtensions
         group.RequireAuthorization();
         group.AddEndpointFilter<DeliveryValidationFilter>();
 
+        group.MapGet("/all", async (
+            IDeliveryService deliveryService,
+            CancellationToken cancellationToken) =>
+        {
+            var deliveries = await deliveryService.GetAllDeliveriesAsync(cancellationToken);
+            return Results.Ok(deliveries);
+        });
+
         group.MapGet("/trades/{tradeProposalId:guid}", async (
             ClaimsPrincipal principal,
             Guid tradeProposalId,

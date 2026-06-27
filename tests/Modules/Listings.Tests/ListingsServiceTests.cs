@@ -93,6 +93,90 @@ public sealed class ListingsServiceTests
                 CancellationToken.None));
     }
 
+    [Fact]
+    public async Task CreateAsync_PersistsProductParityFields()
+    {
+        await using var dbContext = CreateDbContext();
+        var service = new ListingsService(dbContext, new FixedTimeProvider());
+
+        var created = await service.CreateAsync(
+            Guid.NewGuid(),
+            new CreateListingRequest(
+                "Guitar lessons", "One hour of guitar tutoring", "Music", "good", "Cairo",
+                null, true, false, null,
+                OwnerName: "Sam", Type: "service", TransactionType: "barter",
+                Tags: new[] { "music", "lessons" }, ServiceCategory: "musicLessons", EstimatedDuration: 1),
+            CancellationToken.None);
+
+        var fetched = await service.GetByIdAsync(created.Id, CancellationToken.None);
+        Assert.NotNull(fetched);
+        Assert.Equal("service", fetched!.Type);
+        Assert.Equal("Sam", fetched.OwnerName);
+        Assert.Equal("musicLessons", fetched.ServiceCategory);
+        Assert.Equal(1, fetched.EstimatedDuration);
+        Assert.Contains("music", fetched.Tags!);
+        Assert.Equal("good", fetched.Condition);
+    }
+
+    [Fact]
+    public async Task ToggleFavourite_AddsThenRemoves()
+    {
+        await using var dbContext = CreateDbContext();
+        var service = new ListingsService(dbContext, new FixedTimeProvider());
+        var userId = Guid.NewGuid();
+        var listing = await service.CreateAsync(
+            Guid.NewGuid(),
+            new CreateListingRequest("Bike", "Mountain bike", "Sports", "good", "Cairo", null, true, false, null),
+            CancellationToken.None);
+
+        var first = await service.ToggleFavouriteAsync(userId, listing.Id, CancellationToken.None);
+        Assert.True(first.IsFavourite);
+        Assert.True(await service.IsFavouriteAsync(userId, listing.Id, CancellationToken.None));
+        Assert.Single(await service.GetFavouritesAsync(userId, CancellationToken.None));
+
+        var second = await service.ToggleFavouriteAsync(userId, listing.Id, CancellationToken.None);
+        Assert.False(second.IsFavourite);
+        Assert.Empty(await service.GetFavouritesAsync(userId, CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task IncrementView_CountsEachUserOnce()
+    {
+        await using var dbContext = CreateDbContext();
+        var service = new ListingsService(dbContext, new FixedTimeProvider());
+        var viewer = Guid.NewGuid();
+        var listing = await service.CreateAsync(
+            Guid.NewGuid(),
+            new CreateListingRequest("Lamp", "Desk lamp", "Home", "good", "Cairo", null, true, false, null),
+            CancellationToken.None);
+
+        await service.IncrementViewAsync(listing.Id, viewer, CancellationToken.None);
+        await service.IncrementViewAsync(listing.Id, viewer, CancellationToken.None);
+
+        var fetched = await service.GetByIdAsync(listing.Id, CancellationToken.None);
+        Assert.Equal(1, fetched!.ViewCount);
+        Assert.Contains(viewer, fetched.ViewedUserIds!);
+    }
+
+    [Fact]
+    public async Task UpdateStatus_RejectsInvalidStatus()
+    {
+        await using var dbContext = CreateDbContext();
+        var service = new ListingsService(dbContext, new FixedTimeProvider());
+        var ownerId = Guid.NewGuid();
+        var listing = await service.CreateAsync(
+            ownerId,
+            new CreateListingRequest("Sofa", "Comfy sofa", "Home", "good", "Cairo", null, true, false, null),
+            CancellationToken.None);
+
+        var updated = await service.UpdateStatusAsync(
+            ownerId, listing.Id, new UpdateListingStatusRequest("traded"), CancellationToken.None);
+        Assert.Equal("traded", updated.Status);
+
+        await Assert.ThrowsAsync<ListingsValidationException>(() =>
+            service.UpdateStatusAsync(ownerId, listing.Id, new UpdateListingStatusRequest("nonsense"), CancellationToken.None));
+    }
+
     private static ListingsDbContext CreateDbContext()
     {
         var options = new DbContextOptionsBuilder<ListingsDbContext>()

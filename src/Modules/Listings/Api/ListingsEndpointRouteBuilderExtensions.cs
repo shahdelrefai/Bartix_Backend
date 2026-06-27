@@ -25,6 +25,15 @@ public static class ListingsEndpointRouteBuilderExtensions
             return Results.Ok(response);
         });
 
+        publicGroup.MapPost("/by-ids", async (
+            IReadOnlyList<Guid> ids,
+            IListingsService listingsService,
+            CancellationToken cancellationToken) =>
+        {
+            var items = await listingsService.GetByIdsAsync(ids ?? Array.Empty<Guid>(), cancellationToken);
+            return Results.Ok(items);
+        });
+
         publicGroup.MapGet("/{listingId:guid}", async (
             Guid listingId,
             IListingsService listingsService,
@@ -79,6 +88,105 @@ public static class ListingsEndpointRouteBuilderExtensions
         {
             var userId = GetUserId(principal);
             await listingsService.ArchiveAsync(userId, listingId, cancellationToken);
+            return Results.NoContent();
+        });
+
+        authGroup.MapPut("/{listingId:guid}/status", async (
+            ClaimsPrincipal principal,
+            Guid listingId,
+            UpdateListingStatusRequest request,
+            IListingsService listingsService,
+            CancellationToken cancellationToken) =>
+        {
+            var userId = GetUserId(principal);
+            var listing = await listingsService.UpdateStatusAsync(userId, listingId, request, cancellationToken);
+            return Results.Ok(listing);
+        });
+
+        // ─── Favourites ─────────────────────────────────────────────────
+        authGroup.MapGet("/favourites", async (
+            ClaimsPrincipal principal,
+            IListingsService listingsService,
+            CancellationToken cancellationToken) =>
+        {
+            var userId = GetUserId(principal);
+            var items = await listingsService.GetFavouritesAsync(userId, cancellationToken);
+            return Results.Ok(items);
+        });
+
+        authGroup.MapPost("/{listingId:guid}/favourite", async (
+            ClaimsPrincipal principal,
+            Guid listingId,
+            IListingsService listingsService,
+            CancellationToken cancellationToken) =>
+        {
+            var userId = GetUserId(principal);
+            var state = await listingsService.ToggleFavouriteAsync(userId, listingId, cancellationToken);
+            return Results.Ok(state);
+        });
+
+        authGroup.MapPut("/{listingId:guid}/favourite", async (
+            ClaimsPrincipal principal,
+            Guid listingId,
+            IListingsService listingsService,
+            CancellationToken cancellationToken) =>
+        {
+            var userId = GetUserId(principal);
+            await listingsService.AddFavouriteAsync(userId, listingId, cancellationToken);
+            return Results.NoContent();
+        });
+
+        authGroup.MapDelete("/{listingId:guid}/favourite", async (
+            ClaimsPrincipal principal,
+            Guid listingId,
+            IListingsService listingsService,
+            CancellationToken cancellationToken) =>
+        {
+            var userId = GetUserId(principal);
+            await listingsService.RemoveFavouriteAsync(userId, listingId, cancellationToken);
+            return Results.NoContent();
+        });
+
+        authGroup.MapGet("/{listingId:guid}/favourite", async (
+            ClaimsPrincipal principal,
+            Guid listingId,
+            IListingsService listingsService,
+            CancellationToken cancellationToken) =>
+        {
+            var userId = GetUserId(principal);
+            var isFavourite = await listingsService.IsFavouriteAsync(userId, listingId, cancellationToken);
+            return Results.Ok(new FavouriteStateResponse(listingId, isFavourite));
+        });
+
+        // ─── Views & reports ────────────────────────────────────────────
+        authGroup.MapPost("/{listingId:guid}/view", async (
+            ClaimsPrincipal principal,
+            Guid listingId,
+            IListingsService listingsService,
+            CancellationToken cancellationToken) =>
+        {
+            var userId = GetUserId(principal);
+            await listingsService.IncrementViewAsync(listingId, userId, cancellationToken);
+            return Results.NoContent();
+        });
+
+        authGroup.MapPost("/ai-suggest", async (
+            AiSuggestRequest request,
+            IAiDescriptionService aiService,
+            CancellationToken cancellationToken) =>
+        {
+            var suggestions = await aiService.GetSuggestionsAsync(request.ImageUrl, request.Category, request.Condition, cancellationToken);
+            return Results.Ok(new AiSuggestResponse(suggestions));
+        }).RequireAuthorization();
+
+        authGroup.MapPost("/{listingId:guid}/report", async (
+            ClaimsPrincipal principal,
+            Guid listingId,
+            IListingsService listingsService,
+            CancellationToken cancellationToken) =>
+        {
+            var userId = GetUserId(principal);
+            await listingsService.ReportAsync(listingId, userId, cancellationToken);
             return Results.NoContent();
         });
 

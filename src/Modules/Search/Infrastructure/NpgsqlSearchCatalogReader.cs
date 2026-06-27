@@ -1,5 +1,6 @@
 using Bartrix.Modules.Search.Application;
 using Npgsql;
+using NpgsqlTypes;
 
 namespace Bartrix.Modules.Search.Infrastructure;
 
@@ -17,12 +18,15 @@ public sealed class NpgsqlSearchCatalogReader : ISearchCatalogReader
         var sql = BuildSql(request);
 
         await using var command = _dataSource.CreateCommand(sql);
-        command.Parameters.AddWithValue("search", (object?)request.Search ?? DBNull.Value);
-        command.Parameters.AddWithValue("category", (object?)request.Category ?? DBNull.Value);
-        command.Parameters.AddWithValue("location", (object?)request.Location ?? DBNull.Value);
-        command.Parameters.AddWithValue("ownerUserId", (object?)request.OwnerUserId ?? DBNull.Value);
-        command.Parameters.AddWithValue("offset", (request.Page - 1) * request.PageSize);
-        command.Parameters.AddWithValue("pageSize", request.PageSize);
+        command.Parameters.Add("search",    NpgsqlDbType.Text).Value = (object?)request.Search    ?? DBNull.Value;
+        command.Parameters.Add("category",  NpgsqlDbType.Text).Value = (object?)request.Category  ?? DBNull.Value;
+        command.Parameters.Add("location",  NpgsqlDbType.Text).Value = (object?)request.Location  ?? DBNull.Value;
+        command.Parameters.Add("ownerUserId", NpgsqlDbType.Uuid).Value = (object?)request.OwnerUserId ?? DBNull.Value;
+        command.Parameters.Add("minPrice",  NpgsqlDbType.Numeric).Value = (object?)request.MinPrice  ?? DBNull.Value;
+        command.Parameters.Add("maxPrice",  NpgsqlDbType.Numeric).Value = (object?)request.MaxPrice  ?? DBNull.Value;
+        command.Parameters.Add("condition", NpgsqlDbType.Text).Value = (object?)request.Condition  ?? DBNull.Value;
+        command.Parameters.AddWithValue("offset",   (request.Page - 1) * request.PageSize);
+        command.Parameters.AddWithValue("pageSize",  request.PageSize);
 
         var items = new List<SearchCatalogItem>();
         var totalCount = 0;
@@ -40,9 +44,9 @@ public sealed class NpgsqlSearchCatalogReader : ISearchCatalogReader
                 reader.GetString(4),
                 reader.GetString(5),
                 reader.GetString(6),
-                reader.IsDBNull(7) ? null : reader.GetDecimal(7),
+                reader.IsDBNull(7)  ? null : reader.GetDecimal(7),
                 reader.GetBoolean(8),
-                reader.IsDBNull(9) ? null : reader.GetString(9),
+                reader.IsDBNull(9)  ? null : reader.GetString(9),
                 reader.IsDBNull(10) ? null : reader.GetBoolean(10),
                 reader.IsDBNull(11) ? null : reader.GetString(11),
                 reader.IsDBNull(12) ? null : reader.GetString(12),
@@ -80,11 +84,14 @@ public sealed class NpgsqlSearchCatalogReader : ISearchCatalogReader
                 FROM listings.listings l
                 WHERE l.is_active = TRUE
                   AND (@ownerUserId IS NULL OR l.owner_user_id = @ownerUserId)
-                  AND (@category IS NULL OR UPPER(l.category) = UPPER(@category))
-                  AND (@location IS NULL OR UPPER(l.location) LIKE '%' || UPPER(@location) || '%')
+                  AND (@category  IS NULL OR UPPER(l.category)  = UPPER(@category))
+                  AND (@location  IS NULL OR UPPER(l.location)  LIKE '%' || UPPER(@location)  || '%')
+                  AND (@condition IS NULL OR UPPER(l.condition) = UPPER(@condition))
+                  AND (@minPrice  IS NULL OR l.asking_price >= @minPrice)
+                  AND (@maxPrice  IS NULL OR l.asking_price <= @maxPrice)
                   AND (
                         @search IS NULL OR
-                        UPPER(l.title) LIKE '%' || UPPER(@search) || '%' OR
+                        UPPER(l.title)       LIKE '%' || UPPER(@search) || '%' OR
                         UPPER(l.description) LIKE '%' || UPPER(@search) || '%'
                   )
                 """);
@@ -111,15 +118,24 @@ public sealed class NpgsqlSearchCatalogReader : ISearchCatalogReader
                 FROM services.service_offers s
                 WHERE s.is_active = TRUE
                   AND (@ownerUserId IS NULL OR s.owner_user_id = @ownerUserId)
-                  AND (@category IS NULL OR UPPER(s.category) = UPPER(@category))
-                  AND (@location IS NULL OR UPPER(s.location) LIKE '%' || UPPER(@location) || '%')
+                  AND (@category IS NULL OR UPPER(s.category)  = UPPER(@category))
+                  AND (@location IS NULL OR UPPER(s.location)  LIKE '%' || UPPER(@location) || '%')
+                  AND (@minPrice IS NULL OR s.price_amount >= @minPrice)
+                  AND (@maxPrice IS NULL OR s.price_amount <= @maxPrice)
                   AND (
                         @search IS NULL OR
-                        UPPER(s.title) LIKE '%' || UPPER(@search) || '%' OR
+                        UPPER(s.title)       LIKE '%' || UPPER(@search) || '%' OR
                         UPPER(s.description) LIKE '%' || UPPER(@search) || '%'
                   )
                 """);
         }
+
+        var orderBy = request.Sort switch
+        {
+            "price_asc"  => "price_amount ASC NULLS LAST",
+            "price_desc" => "price_amount DESC NULLS LAST",
+            _            => "created_at_utc DESC"
+        };
 
         return $"""
             WITH search_results AS (
@@ -142,7 +158,7 @@ public sealed class NpgsqlSearchCatalogReader : ISearchCatalogReader
                 COUNT(*) OVER() AS total_count,
                 created_at_utc
             FROM search_results
-            ORDER BY created_at_utc DESC
+            ORDER BY {orderBy}
             OFFSET @offset
             LIMIT @pageSize;
             """;

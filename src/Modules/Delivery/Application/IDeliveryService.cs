@@ -13,4 +13,6 @@ public interface IDeliveryService
     Task<DeliveryResponse> ConfirmAsync(Guid userId, Guid tradeProposalId, CancellationToken cancellationToken);
 
     Task<DeliveryResponse> CancelAsync(Guid userId, Guid tradeProposalId, CancellationToken cancellationToken);
+
+    Task<IReadOnlyList<DeliveryResponse>> GetAllDeliveriesAsync(CancellationToken cancellationToken);
 }

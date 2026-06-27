@@ -14,9 +14,9 @@ public sealed class ServicesQuery
 
     public Guid? OwnerUserId { get; init; }
 
-    public bool OnlyActive { get; init; } = true;
+    public bool? OnlyActive { get; init; }
 
-    public int Page { get; init; } = 1;
+    public int? Page { get; init; }
 
-    public int PageSize { get; init; } = 20;
+    public int? PageSize { get; init; }
 }

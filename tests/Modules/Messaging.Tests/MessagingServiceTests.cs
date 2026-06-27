@@ -98,6 +98,74 @@ public sealed class MessagingServiceTests
         Assert.Equal("second", response[0].LastMessage?.Body);
     }
 
+    [Fact]
+    public async Task DirectConversation_IsCreatedOnce_AndReused()
+    {
+        await using var dbContext = CreateDbContext();
+        var userA = Guid.NewGuid();
+        var userB = Guid.NewGuid();
+        var service = CreateService(dbContext, new FakeTradeReader(new TradeConversationAccessSnapshot(Guid.NewGuid(), userA, userB)), new RecordingNotifier());
+
+        var first = await service.GetOrCreateDirectConversationAsync(userA, userB, CancellationToken.None);
+        // Same pair, reversed order, should resolve to the same conversation.
+        var second = await service.GetOrCreateDirectConversationAsync(userB, userA, CancellationToken.None);
+
+        Assert.Equal(first.Id, second.Id);
+        Assert.Null(first.TradeProposalId);
+        Assert.Equal(1, await dbContext.Conversations.CountAsync());
+    }
+
+    [Fact]
+    public async Task SendConversationMessage_IncrementsRecipientUnread_AndMarkReadClearsIt()
+    {
+        await using var dbContext = CreateDbContext();
+        var userA = Guid.NewGuid();
+        var userB = Guid.NewGuid();
+        var notifier = new RecordingNotifier();
+        var service = CreateService(dbContext, new FakeTradeReader(new TradeConversationAccessSnapshot(Guid.NewGuid(), userA, userB)), notifier);
+
+        var convo = await service.GetOrCreateDirectConversationAsync(userA, userB, CancellationToken.None);
+        await service.SendConversationMessageAsync(userA, convo.Id, new SendMessageRequest("hi", null), CancellationToken.None);
+
+        // The recipient (B) should have an unread message and a conversation-update push.
+        var bView = await service.GetConversationAsync(userB, convo.Id, CancellationToken.None);
+        Assert.Equal(1, bView.UnreadCount);
+        Assert.Contains(notifier.Updates, u => u.UserId == userB);
+
+        await service.MarkConversationReadAsync(userB, convo.Id, CancellationToken.None);
+        var afterRead = await service.GetConversationAsync(userB, convo.Id, CancellationToken.None);
+        Assert.Equal(0, afterRead.UnreadCount);
+    }
+
+    [Fact]
+    public async Task SendConversationMessage_AllowsImageOnly()
+    {
+        await using var dbContext = CreateDbContext();
+        var userA = Guid.NewGuid();
+        var userB = Guid.NewGuid();
+        var service = CreateService(dbContext, new FakeTradeReader(new TradeConversationAccessSnapshot(Guid.NewGuid(), userA, userB)), new RecordingNotifier());
+
+        var convo = await service.GetOrCreateDirectConversationAsync(userA, userB, CancellationToken.None);
+        var message = await service.SendConversationMessageAsync(userA, convo.Id, new SendMessageRequest(null, "https://cdn/x.png"), CancellationToken.None);
+
+        Assert.Null(message.Body);
+        Assert.Equal("https://cdn/x.png", message.ImageUrl);
+    }
+
+    [Fact]
+    public async Task SendConversationMessage_RejectsEmptyMessage()
+    {
+        await using var dbContext = CreateDbContext();
+        var userA = Guid.NewGuid();
+        var userB = Guid.NewGuid();
+        var service = CreateService(dbContext, new FakeTradeReader(new TradeConversationAccessSnapshot(Guid.NewGuid(), userA, userB)), new RecordingNotifier());
+
+        var convo = await service.GetOrCreateDirectConversationAsync(userA, userB, CancellationToken.None);
+
+        await Assert.ThrowsAsync<MessagingValidationException>(() =>
+            service.SendConversationMessageAsync(userA, convo.Id, new SendMessageRequest(null, null), CancellationToken.None));
+    }
+
     private static MessagingDbContext CreateDbContext()
     {
         var options = new DbContextOptionsBuilder<MessagingDbContext>()
@@ -134,6 +202,14 @@ public sealed class MessagingServiceTests
     private sealed class RecordingNotifier : IConversationRealtimeNotifier
     {
         public List<ConversationMessageResponse> Messages { get; } = new();
+
+        public List<(Guid UserId, ConversationListItemResponse Conversation)> Updates { get; } = new();
+
+        public Task NotifyConversationUpdatedAsync(Guid userId, ConversationListItemResponse conversation, CancellationToken cancellationToken)
+        {
+            Updates.Add((userId, conversation));
+            return Task.CompletedTask;
+        }
 
         public Task NotifyMessageSentAsync(Guid conversationId, ConversationMessageResponse message, CancellationToken cancellationToken)
         {

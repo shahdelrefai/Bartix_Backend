@@ -1,0 +1,12 @@
+.env
+bin/
+obj/
+**/.vs/
+**/.vscode/
+tests/
+docs/
+deploy/
+*.user
+*.md
+nohup.out
+.git/

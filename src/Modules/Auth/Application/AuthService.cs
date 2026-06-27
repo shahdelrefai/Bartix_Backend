@@ -13,12 +13,16 @@ namespace Bartrix.Modules.Auth.Application;
 public sealed class AuthService : IAuthService
 {
     private const string PhoneSignInPurpose = "phone-sign-in";
+    private const string EmailMfaPurpose = "email-mfa";
+    private const string PasswordResetPurpose = "password-reset";
 
     private readonly AuthDbContext _dbContext;
     private readonly IPasswordHasher _passwordHasher;
     private readonly IJwtTokenService _jwtTokenService;
     private readonly IRefreshTokenService _refreshTokenService;
     private readonly IOtpProvider _otpProvider;
+    private readonly IGoogleTokenValidator _googleTokenValidator;
+    private readonly IEmailOtpService _emailOtpService;
     private readonly OtpOptions _otpOptions;
     private readonly TimeProvider _timeProvider;
 
@@ -28,6 +32,8 @@ public sealed class AuthService : IAuthService
         IJwtTokenService jwtTokenService,
         IRefreshTokenService refreshTokenService,
         IOtpProvider otpProvider,
+        IGoogleTokenValidator googleTokenValidator,
+        IEmailOtpService emailOtpService,
         IOptions<OtpOptions> otpOptions,
         TimeProvider timeProvider)
     {
@@ -36,12 +42,19 @@ public sealed class AuthService : IAuthService
         _jwtTokenService = jwtTokenService;
         _refreshTokenService = refreshTokenService;
         _otpProvider = otpProvider;
+        _googleTokenValidator = googleTokenValidator;
+        _emailOtpService = emailOtpService;
         _otpOptions = otpOptions.Value;
         _timeProvider = timeProvider;
     }
 
     public async Task<AuthTokensResponse> RegisterAsync(RegisterRequest request, CancellationToken cancellationToken)
     {
+        if (string.IsNullOrWhiteSpace(request.DisplayName))
+        {
+            throw new AuthValidationException("Display name is required.");
+        }
+
         var normalizedEmail = NormalizeEmail(request.Email);
         var normalizedPhone = NormalizePhoneNumber(request.PhoneNumber);
         var nowUtc = GetUtcNow();
@@ -57,6 +70,9 @@ public sealed class AuthService : IAuthService
             throw new AuthValidationException("An account with this phone number already exists.");
         }
 
+        var isWhitelistedAdmin = await _dbContext.AdminWhitelist
+            .AnyAsync(x => x.NormalizedEmail == normalizedEmail, cancellationToken);
+
         var user = new UserAccount(
             request.Email.Trim(),
             normalizedEmail,
@@ -64,9 +80,52 @@ public sealed class AuthService : IAuthService
             request.DisplayName.Trim(),
             request.PhoneNumber?.Trim(),
             normalizedPhone,
-            nowUtc);
+            nowUtc,
+            isWhitelistedAdmin ? UserRoles.Admin : UserRoles.User);
 
         _dbContext.Users.Add(user);
+        await _dbContext.SaveChangesAsync(cancellationToken);
+
+        return await IssueTokensAsync(user, nowUtc, cancellationToken);
+    }
+
+    public async Task<AuthTokensResponse> GoogleSignInAsync(GoogleSignInRequest request, CancellationToken cancellationToken)
+    {
+        var info = await _googleTokenValidator.ValidateAsync(request.IdToken, cancellationToken)
+            ?? throw new AuthValidationException("Google sign-in token is invalid.");
+
+        if (!info.EmailVerified)
+        {
+            throw new AuthValidationException("Google account email is not verified.");
+        }
+
+        var normalizedEmail = NormalizeEmail(info.Email);
+        var nowUtc = GetUtcNow();
+
+        var user = await _dbContext.Users.SingleOrDefaultAsync(
+            x => x.NormalizedEmail == normalizedEmail,
+            cancellationToken);
+
+        if (user is null)
+        {
+            var isWhitelistedAdmin = await _dbContext.AdminWhitelist
+                .AnyAsync(x => x.NormalizedEmail == normalizedEmail, cancellationToken);
+
+            // Federated accounts have no local password; store a random unusable hash.
+            user = new UserAccount(
+                info.Email.Trim(),
+                normalizedEmail,
+                _passwordHasher.Hash(Guid.NewGuid().ToString("N")),
+                string.IsNullOrWhiteSpace(info.Name) ? "Google User" : info.Name!.Trim(),
+                phoneNumber: null,
+                normalizedPhoneNumber: null,
+                nowUtc,
+                isWhitelistedAdmin ? UserRoles.Admin : UserRoles.User);
+
+            _dbContext.Users.Add(user);
+        }
+
+        user.MarkLoggedIn(nowUtc);
         await _dbContext.SaveChangesAsync(cancellationToken);
 
         return await IssueTokensAsync(user, nowUtc, cancellationToken);
@@ -211,7 +270,90 @@ public sealed class AuthService : IAuthService
     public async Task<UserProfileResponse?> GetMeAsync(Guid userId, CancellationToken cancellationToken)
     {
         var user = await _dbContext.Users.SingleOrDefaultAsync(x => x.Id == userId, cancellationToken);
-        return user is null ? null : MapUser(user);
+        if (user is null)
+        {
+            return null;
+        }
+
+        var blockedIds = await LoadBlockedIdsAsync(userId, cancellationToken);
+        return MapUser(user, blockedIds);
+    }
+
+    public async Task<UserProfileResponse> UpdateProfileAsync(Guid userId, UpdateProfileRequest request, CancellationToken cancellationToken)
+    {
+        var user = await _dbContext.Users.SingleOrDefaultAsync(x => x.Id == userId, cancellationToken)
+            ?? throw new AuthValidationException("User was not found.");
+
+        if (request.Name is not null && request.Name.Trim().Length > 200)
+        {
+            throw new AuthValidationException("Name cannot exceed 200 characters.");
+        }
+
+        user.UpdateProfile(request.Name, request.ProfileImageUrl, request.Is2faEnabled);
+        await _dbContext.SaveChangesAsync(cancellationToken);
+
+        var blockedIds = await LoadBlockedIdsAsync(userId, cancellationToken);
+        return MapUser(user, blockedIds);
+    }
+
+    public async Task UpdateLanguageAsync(Guid userId, UpdateLanguageRequest request, CancellationToken cancellationToken)
+    {
+        var user = await _dbContext.Users.SingleOrDefaultAsync(x => x.Id == userId, cancellationToken)
+            ?? throw new AuthValidationException("User was not found.");
+
+        user.SetLanguage(request.LanguageCode);
+        await _dbContext.SaveChangesAsync(cancellationToken);
+    }
+
+    public async Task BlockUserAsync(Guid userId, Guid blockedUserId, CancellationToken cancellationToken)
+    {
+        if (userId == blockedUserId)
+        {
+            throw new AuthValidationException("You cannot block yourself.");
+        }
+
+        var alreadyBlocked = await _dbContext.BlockedUsers
+            .AnyAsync(x => x.UserId == userId && x.BlockedUserId == blockedUserId, cancellationToken);
+
+        if (alreadyBlocked)
+        {
+            return;
+        }
+
+        _dbContext.BlockedUsers.Add(new BlockedUser(userId, blockedUserId, GetUtcNow()));
+        await _dbContext.SaveChangesAsync(cancellationToken);
+    }
+
+    public async Task UnblockUserAsync(Guid userId, Guid blockedUserId, CancellationToken cancellationToken)
+    {
+        var entry = await _dbContext.BlockedUsers
+            .SingleOrDefaultAsync(x => x.UserId == userId && x.BlockedUserId == blockedUserId, cancellationToken);
+
+        if (entry is null)
+        {
+            return;
+        }
+
+        _dbContext.BlockedUsers.Remove(entry);
+        await _dbContext.SaveChangesAsync(cancellationToken);
+    }
+
+    public async Task<PublicUserResponse?> GetPublicUserAsync(Guid userId, CancellationToken cancellationToken)
+    {
+        var user = await _dbContext.Users.AsNoTracking()
+            .SingleOrDefaultAsync(x => x.Id == userId, cancellationToken);
+
+        return user is null
+            ? null
+            : new PublicUserResponse(user.Id, user.DisplayName, user.ProfileImageUrl, user.Role, user.IsPremiumActive);
+    }
+
+    private async Task<List<Guid>> LoadBlockedIdsAsync(Guid userId, CancellationToken cancellationToken)
+    {
+        return await _dbContext.BlockedUsers.AsNoTracking()
+            .Where(x => x.UserId == userId)
+            .Select(x => x.BlockedUserId)
+            .ToListAsync(cancellationToken);
     }
 
     private async Task<AuthTokensResponse> IssueTokensAsync(
@@ -232,12 +374,14 @@ public sealed class AuthService : IAuthService
         _dbContext.RefreshTokenSessions.Add(session);
         await _dbContext.SaveChangesAsync(cancellationToken);
 
+        var blockedIds = await LoadBlockedIdsAsync(user.Id, cancellationToken);
+
         return new AuthTokensResponse(
             accessToken.Token,
             accessToken.ExpiresAtUtc,
             refreshToken.Token,
             refreshToken.ExpiresAtUtc,
-            MapUser(user));
+            MapUser(user, blockedIds));
     }
 
     private IEnumerable<Claim> BuildClaims(UserAccount user)
@@ -254,20 +398,138 @@ public sealed class AuthService : IAuthService
             claims.Add(new(ClaimTypes.MobilePhone, user.PhoneNumber));
         }
 
+        claims.Add(new(ClaimTypes.Role, user.Role));
         claims.Add(new("phone_verified", user.IsPhoneVerified.ToString().ToLowerInvariant()));
 
         return claims;
     }
 
-    private static UserProfileResponse MapUser(UserAccount user)
+    private static UserProfileResponse MapUser(UserAccount user, IReadOnlyList<Guid> blockedUserIds)
     {
         return new UserProfileResponse(
             user.Id,
             user.Email,
             user.DisplayName,
             user.PhoneNumber,
-            user.IsPhoneVerified);
+            user.IsPhoneVerified,
+            user.Role,
+            user.LanguageCode,
+            user.ProfileImageUrl,
+            user.Is2faEnabled,
+            user.IsPremiumActive,
+            user.IsSuspended,
+            user.PremiumExpiresAtUtc,
+            user.WalletBalance,
+            blockedUserIds,
+            // Favourites live in the Listings module; the client loads them via
+            // the favourites endpoint, so this stays empty here.
+            Array.Empty<Guid>());
     }
+
+    // ─── Email OTP ────────────────────────────────────────────────────────────
+
+    public async Task RequestEmailOtpAsync(string email, string purpose, CancellationToken cancellationToken)
+    {
+        var normalizedEmail = NormalizeEmail(email);
+        var user = await _dbContext.Users
+            .AsNoTracking()
+            .SingleOrDefaultAsync(x => x.NormalizedEmail == normalizedEmail, cancellationToken);
+
+        if (user is null)
+            throw new AuthValidationException("No account is associated with this email address.");
+
+        await _emailOtpService.SendOtpAsync(email.Trim(), purpose, cancellationToken);
+    }
+
+    public async Task<AuthTokensResponse> VerifyEmailOtpAsync(string email, string code, CancellationToken cancellationToken)
+    {
+        var normalizedEmail = NormalizeEmail(email);
+        var isValid = await _emailOtpService.VerifyOtpAsync(email.Trim(), EmailMfaPurpose, code, cancellationToken);
+        if (!isValid)
+            throw new AuthValidationException("Invalid or expired verification code.");
+
+        var user = await _dbContext.Users
+            .SingleOrDefaultAsync(x => x.NormalizedEmail == normalizedEmail, cancellationToken)
+            ?? throw new AuthValidationException("No account is associated with this email address.");
+
+        var nowUtc = GetUtcNow();
+        user.MarkLoggedIn(nowUtc);
+        await _dbContext.SaveChangesAsync(cancellationToken);
+
+        return await IssueTokensAsync(user, nowUtc, cancellationToken);
+    }
+
+    // ─── Password reset ───────────────────────────────────────────────────────
+
+    public async Task RequestPasswordResetAsync(string email, CancellationToken cancellationToken)
+    {
+        var normalizedEmail = NormalizeEmail(email);
+        var user = await _dbContext.Users
+            .AsNoTracking()
+            .SingleOrDefaultAsync(x => x.NormalizedEmail == normalizedEmail, cancellationToken);
+
+        // Always succeed to avoid email enumeration
+        if (user is null) return;
+
+        await _emailOtpService.SendOtpAsync(email.Trim(), PasswordResetPurpose, cancellationToken);
+    }
+
+    public async Task ConfirmPasswordResetAsync(string email, string code, string newPassword, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(newPassword) || newPassword.Length < 8)
+            throw new AuthValidationException("Password must be at least 8 characters.");
+
+        var isValid = await _emailOtpService.VerifyOtpAsync(email.Trim(), PasswordResetPurpose, code, cancellationToken);
+        if (!isValid)
+            throw new AuthValidationException("Invalid or expired reset code.");
+
+        var normalizedEmail = NormalizeEmail(email);
+        var user = await _dbContext.Users
+            .SingleOrDefaultAsync(x => x.NormalizedEmail == normalizedEmail, cancellationToken)
+            ?? throw new AuthValidationException("No account is associated with this email address.");
+
+        user.SetPasswordHash(_passwordHasher.Hash(newPassword));
+        await _dbContext.SaveChangesAsync(cancellationToken);
+    }
+
+    // ─── Logout ──────────────────────────────────────────────────────────────
+
+    public async Task LogoutAsync(string refreshToken, CancellationToken cancellationToken)
+    {
+        var hash = ComputeSha256(refreshToken);
+        var session = await _dbContext.RefreshTokenSessions
+            .SingleOrDefaultAsync(x => x.TokenHash == hash, cancellationToken);
+
+        if (session is null) return;
+
+        session.Revoke(GetUtcNow());
+        await _dbContext.SaveChangesAsync(cancellationToken);
+    }
+
+    // ─── Premium ─────────────────────────────────────────────────────────────
+
+    public async Task ActivatePremiumAsync(Guid userId, string paymobPaymentId, CancellationToken cancellationToken)
+    {
+        var user = await _dbContext.Users
+            .SingleOrDefaultAsync(x => x.Id == userId, cancellationToken)
+            ?? throw new AuthValidationException("User not found.");
+
+        var nowUtc = GetUtcNow();
+        user.ApplyPremium(true, nowUtc.AddDays(30));
+        await _dbContext.SaveChangesAsync(cancellationToken);
+    }
+
+    public async Task<(bool IsActive, DateTimeOffset? ExpiresAt)> GetPremiumStatusAsync(Guid userId, CancellationToken cancellationToken)
+    {
+        var user = await _dbContext.Users
+            .AsNoTracking()
+            .SingleOrDefaultAsync(x => x.Id == userId, cancellationToken)
+            ?? throw new AuthValidationException("User not found.");
+
+        return (user.IsPremiumActive, user.PremiumExpiresAtUtc);
+    }
+
+    // ─── Helpers ─────────────────────────────────────────────────────────────
 
     private DateTimeOffset GetUtcNow() => _timeProvider.GetUtcNow();
 

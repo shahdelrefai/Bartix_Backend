@@ -36,6 +36,27 @@ public static class ReputationEndpointRouteBuilderExtensions
             return Results.Ok(response);
         }).RequireAuthorization();
 
+        group.MapGet("/users/{userId:guid}/reviews", async (
+            Guid userId,
+            IReputationService reputationService,
+            CancellationToken cancellationToken) =>
+        {
+            var response = await reputationService.GetUserReviewsAsync(userId, cancellationToken);
+            return Results.Ok(response);
+        });
+
+        group.MapPost("/users/{targetUserId:guid}", async (
+            ClaimsPrincipal principal,
+            Guid targetUserId,
+            CreateUserReviewRequest request,
+            IReputationService reputationService,
+            CancellationToken cancellationToken) =>
+        {
+            var userId = GetUserId(principal);
+            var response = await reputationService.CreateUserReviewAsync(userId, targetUserId, request, cancellationToken);
+            return Results.Ok(response);
+        }).RequireAuthorization();
+
         return app;
     }
 

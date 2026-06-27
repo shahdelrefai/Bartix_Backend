@@ -27,8 +27,16 @@ public sealed class ReputationDatabaseInitializer : IDatabaseInitializer
                 created_at_utc timestamp with time zone NOT NULL
             );
 
+            -- Direct user-to-user reviews have a null trade_proposal_id.
+            ALTER TABLE reputation.reputation_reviews
+                ALTER COLUMN trade_proposal_id DROP NOT NULL,
+                ADD COLUMN IF NOT EXISTS reviewer_name character varying(200) NULL,
+                ADD COLUMN IF NOT EXISTS title character varying(200) NULL;
+
+            DROP INDEX IF EXISTS reputation.ix_reputation_reviews_trade_reviewer;
             CREATE UNIQUE INDEX IF NOT EXISTS ix_reputation_reviews_trade_reviewer
-                ON reputation.reputation_reviews (trade_proposal_id, reviewer_user_id);
+                ON reputation.reputation_reviews (trade_proposal_id, reviewer_user_id)
+                WHERE trade_proposal_id IS NOT NULL;
 
             CREATE INDEX IF NOT EXISTS ix_reputation_reviews_reviewee_user_id
                 ON reputation.reputation_reviews (reviewee_user_id);

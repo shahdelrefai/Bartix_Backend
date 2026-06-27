@@ -62,11 +62,12 @@ public static class TradesEndpointRouteBuilderExtensions
         group.MapPost("/{tradeId:guid}/reject", async (
             ClaimsPrincipal principal,
             Guid tradeId,
+            RejectTradeRequest? request,
             ITradesService tradesService,
             CancellationToken cancellationToken) =>
         {
             var userId = GetUserId(principal);
-            var response = await tradesService.RejectAsync(userId, tradeId, cancellationToken);
+            var response = await tradesService.RejectAsync(userId, tradeId, request ?? new RejectTradeRequest(null), cancellationToken);
             return Results.Ok(response);
         });
 
@@ -79,6 +80,64 @@ public static class TradesEndpointRouteBuilderExtensions
             var userId = GetUserId(principal);
             await tradesService.CancelAsync(userId, tradeId, cancellationToken);
             return Results.NoContent();
+        });
+
+        group.MapPost("/{tradeId:guid}/complete", async (
+            ClaimsPrincipal principal,
+            Guid tradeId,
+            ITradesService tradesService,
+            CancellationToken cancellationToken) =>
+        {
+            var userId = GetUserId(principal);
+            var response = await tradesService.CompleteAsync(userId, tradeId, cancellationToken);
+            return Results.Ok(response);
+        });
+
+        // ─── Counter-offers ─────────────────────────────────────────────
+        group.MapGet("/{tradeId:guid}/counter-offers", async (
+            ClaimsPrincipal principal,
+            Guid tradeId,
+            ITradesService tradesService,
+            CancellationToken cancellationToken) =>
+        {
+            var userId = GetUserId(principal);
+            var response = await tradesService.GetCounterOffersAsync(userId, tradeId, cancellationToken);
+            return Results.Ok(response);
+        });
+
+        group.MapPost("/{tradeId:guid}/counter-offers", async (
+            ClaimsPrincipal principal,
+            Guid tradeId,
+            AddCounterOfferRequest request,
+            ITradesService tradesService,
+            CancellationToken cancellationToken) =>
+        {
+            var userId = GetUserId(principal);
+            var response = await tradesService.AddCounterOfferAsync(userId, tradeId, request, cancellationToken);
+            return Results.Created($"/api/trades/{tradeId}/counter-offers/{response.Id}", response);
+        });
+
+        group.MapPost("/{tradeId:guid}/counter-offers/{counterOfferId:guid}/accept", async (
+            ClaimsPrincipal principal,
+            Guid tradeId,
+            Guid counterOfferId,
+            ITradesService tradesService,
+            CancellationToken cancellationToken) =>
+        {
+            var userId = GetUserId(principal);
+            var response = await tradesService.AcceptCounterOfferAsync(userId, tradeId, counterOfferId, cancellationToken);
+            return Results.Ok(response);
+        });
+
+        group.MapGet("/{tradeId:guid}/history", async (
+            ClaimsPrincipal principal,
+            Guid tradeId,
+            ITradesService tradesService,
+            CancellationToken cancellationToken) =>
+        {
+            var userId = GetUserId(principal);
+            var response = await tradesService.GetHistoryAsync(userId, tradeId, cancellationToken);
+            return Results.Ok(response);
         });
 
         return app;

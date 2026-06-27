@@ -19,6 +19,7 @@ public static class TradesModuleServiceCollectionExtensions
         services.AddScoped<ITradesService, TradesService>();
         services.AddSingleton<IListingTradeValidationReader, NpgsqlListingTradeValidationReader>();
         services.AddSingleton<IDatabaseInitializer, TradesDatabaseInitializer>();
+        services.AddHostedService<TradeExpirationHostedService>();
 
         return services;
     }

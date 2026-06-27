@@ -65,7 +65,16 @@ public sealed class DeliveryService : IDeliveryService
         return Map(delivery);
     }
 
-    private async Task<TradeDelivery> GetOrCreateDeliveryAsync(Guid userId, Guid tradeProposalId, CancellationToken cancellationToken)
+    public async Task<IReadOnlyList<DeliveryResponse>> GetAllDeliveriesAsync(CancellationToken cancellationToken)
+    {
+        var deliveries = await _dbContext.Deliveries
+            .OrderByDescending(x => x.CreatedAtUtc)
+            .ToListAsync(cancellationToken);
+
+        return deliveries.Select(Map).ToList();
+    }
+
+        private async Task<TradeDelivery> GetOrCreateDeliveryAsync(Guid userId, Guid tradeProposalId, CancellationToken cancellationToken)
     {
         var existing = await _dbContext.Deliveries.SingleOrDefaultAsync(x => x.TradeProposalId == tradeProposalId, cancellationToken);
 
@@ -86,9 +95,10 @@ public sealed class DeliveryService : IDeliveryService
             throw new DeliveryValidationException("You do not have access to this trade delivery.");
         }
 
-        if (!string.Equals(trade.Status, "Accepted", StringComparison.OrdinalIgnoreCase))
+        if (!string.Equals(trade.Status, "Accepted", StringComparison.OrdinalIgnoreCase) &&
+            !string.Equals(trade.Status, "Completed", StringComparison.OrdinalIgnoreCase))
         {
-            throw new DeliveryValidationException("Delivery can only be created for accepted trades.");
+            throw new DeliveryValidationException("Delivery can only be created for accepted or completed trades.");
         }
 
         var delivery = new TradeDelivery(
@@ -114,7 +124,7 @@ public sealed class DeliveryService : IDeliveryService
     {
         if (!Enum.TryParse<DeliveryMethod>(method, true, out var parsed))
         {
-            throw new DeliveryValidationException("Method must be Meetup, Dropoff, or DigitalService.");
+            throw new DeliveryValidationException("Method must be Meetup, Dropoff, DigitalService, or Delivery.");
         }
 
         return parsed;

@@ -7,4 +7,8 @@ public sealed record SearchCatalogRequest(
     SearchSourceType SourceType,
     Guid? OwnerUserId,
     int Page,
-    int PageSize);
+    int PageSize,
+    decimal? MinPrice,
+    decimal? MaxPrice,
+    string? Condition,
+    string? Sort);

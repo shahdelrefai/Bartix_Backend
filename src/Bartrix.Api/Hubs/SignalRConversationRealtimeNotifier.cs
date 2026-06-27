@@ -19,4 +19,11 @@ public sealed class SignalRConversationRealtimeNotifier : IConversationRealtimeN
             .Group(TradeChatHub.ToConversationGroup(conversationId))
             .SendAsync("messageReceived", message, cancellationToken);
     }
+
+    public Task NotifyConversationUpdatedAsync(Guid userId, ConversationListItemResponse conversation, CancellationToken cancellationToken)
+    {
+        return _hubContext.Clients
+            .Group(TradeChatHub.ToUserGroup(userId.ToString()))
+            .SendAsync("conversationUpdated", conversation, cancellationToken);
+    }
 }

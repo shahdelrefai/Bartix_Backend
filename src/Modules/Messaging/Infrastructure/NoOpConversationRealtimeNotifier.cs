@@ -9,4 +9,9 @@ public sealed class NoOpConversationRealtimeNotifier : IConversationRealtimeNoti
     {
         return Task.CompletedTask;
     }
+
+    public Task NotifyConversationUpdatedAsync(Guid userId, ConversationListItemResponse conversation, CancellationToken cancellationToken)
+    {
+        return Task.CompletedTask;
+    }
 }

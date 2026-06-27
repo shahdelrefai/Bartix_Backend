@@ -85,6 +85,58 @@ public sealed class ReputationServiceTests
         Assert.Equal("Okay", summary.RecentReviews[0].Comment);
     }
 
+    [Fact]
+    public async Task CreateUserReviewAsync_CreatesDirectReview_AndCountsInReputation()
+    {
+        await using var dbContext = CreateDbContext();
+        var reviewerId = Guid.NewGuid();
+        var targetId = Guid.NewGuid();
+        var service = new ReputationService(dbContext, new FakeTradeReader(null), new FixedTimeProvider());
+
+        var review = await service.CreateUserReviewAsync(
+            reviewerId,
+            targetId,
+            new CreateUserReviewRequest(5, "Reliable", "Smooth and friendly", "Alice"),
+            CancellationToken.None);
+
+        Assert.Null(review.TradeProposalId);
+        Assert.Equal("Reliable", review.Title);
+        Assert.Equal("Alice", review.ReviewerName);
+        Assert.Equal("Smooth and friendly", review.Comment);
+
+        var reviews = await service.GetUserReviewsAsync(targetId, CancellationToken.None);
+        Assert.Single(reviews);
+
+        var summary = await service.GetUserReputationAsync(targetId, CancellationToken.None);
+        Assert.Equal(1, summary.TotalReviews);
+        Assert.Equal(5.00m, summary.AverageRating);
+    }
+
+    [Fact]
+    public async Task CreateUserReviewAsync_RejectsSelfReview()
+    {
+        await using var dbContext = CreateDbContext();
+        var userId = Guid.NewGuid();
+        var service = new ReputationService(dbContext, new FakeTradeReader(null), new FixedTimeProvider());
+
+        await Assert.ThrowsAsync<ReputationValidationException>(() =>
+            service.CreateUserReviewAsync(userId, userId, new CreateUserReviewRequest(4, null, "Nope"), CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task CreateUserReviewAsync_AllowsMultipleReviewsForSameTarget()
+    {
+        await using var dbContext = CreateDbContext();
+        var targetId = Guid.NewGuid();
+        var service = new ReputationService(dbContext, new FakeTradeReader(null), new FixedTimeProvider());
+
+        await service.CreateUserReviewAsync(Guid.NewGuid(), targetId, new CreateUserReviewRequest(5, null, "A"), CancellationToken.None);
+        await service.CreateUserReviewAsync(Guid.NewGuid(), targetId, new CreateUserReviewRequest(3, null, "B"), CancellationToken.None);
+
+        var reviews = await service.GetUserReviewsAsync(targetId, CancellationToken.None);
+        Assert.Equal(2, reviews.Count);
+    }
+
     private static ReputationDbContext CreateDbContext()
     {
         var options = new DbContextOptionsBuilder<ReputationDbContext>()

@@ -7,6 +7,11 @@ namespace Bartrix.Modules.Listings.Application;
 
 public sealed class ListingsService : IListingsService
 {
+    private static readonly HashSet<string> AllowedStatuses = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "available", "traded", "reserved", "unavailable"
+    };
+
     private readonly ListingsDbContext _dbContext;
     private readonly TimeProvider _timeProvider;
 
@@ -33,6 +38,11 @@ public sealed class ListingsService : IListingsService
             model.IsAvailableForSwap,
             model.IsAvailableForSale,
             nowUtc);
+
+        ApplyProductDetails(listing, request.OwnerName, request.Type, request.TransactionType, request.Price,
+            request.DesiredSwapCategory, request.CustomCategory, request.Latitude, request.Longitude, request.Tags,
+            request.IsOwnerPremium, request.ServiceCategory, request.CustomServiceCategory, request.EstimatedDuration,
+            request.PriceRange, request.AvailabilitySchedule, request.Skills);
 
         listing.ReplaceImages(model.ImageUrls);
 
@@ -69,6 +79,11 @@ public sealed class ListingsService : IListingsService
             model.IsAvailableForSale,
             _timeProvider.GetUtcNow());
 
+        ApplyProductDetails(listing, request.OwnerName, request.Type, request.TransactionType, request.Price,
+            request.DesiredSwapCategory, request.CustomCategory, request.Latitude, request.Longitude, request.Tags,
+            request.IsOwnerPremium, request.ServiceCategory, request.CustomServiceCategory, request.EstimatedDuration,
+            request.PriceRange, request.AvailabilitySchedule, request.Skills);
+
         listing.ReplaceImages(model.ImageUrls);
         await _dbContext.SaveChangesAsync(cancellationToken);
 
@@ -96,20 +111,33 @@ public sealed class ListingsService : IListingsService
             .Include(x => x.Images)
             .SingleOrDefaultAsync(x => x.Id == listingId, cancellationToken);
 
-        return listing is null ? null : Map(listing);
+        if (listing is null)
+        {
+            return null;
+        }
+
+        var interested = await _dbContext.ListingFavorites.AsNoTracking()
+            .Where(x => x.ListingId == listingId).Select(x => x.UserId).ToListAsync(cancellationToken);
+        var viewed = await _dbContext.ListingViews.AsNoTracking()
+            .Where(x => x.ListingId == listingId).Select(x => x.UserId).ToListAsync(cancellationToken);
+        var reported = await _dbContext.ListingReports.AsNoTracking()
+            .Where(x => x.ListingId == listingId).Select(x => x.UserId).ToListAsync(cancellationToken);
+
+        return Map(listing, interested, viewed, reported);
     }
 
     public async Task<PagedListingsResponse> BrowseAsync(ListingsQuery query, CancellationToken cancellationToken)
     {
-        var page = query.Page <= 0 ? 1 : query.Page;
-        var pageSize = query.PageSize <= 0 ? 20 : Math.Min(query.PageSize, 100);
+        var page = query.Page.GetValueOrDefault(1) <= 0 ? 1 : query.Page.GetValueOrDefault(1);
+        var requestedPageSize = query.PageSize.GetValueOrDefault(20);
+        var pageSize = requestedPageSize <= 0 ? 20 : Math.Min(requestedPageSize, 100);
 
         var listings = _dbContext.Listings
             .AsNoTracking()
             .Include(x => x.Images)
             .AsQueryable();
 
-        if (query.OnlyActive)
+        if (query.OnlyActive ?? true)
         {
             listings = listings.Where(x => x.IsActive);
         }
@@ -131,10 +159,10 @@ public sealed class ListingsService : IListingsService
             listings = listings.Where(x => x.Location.ToUpper().Contains(location));
         }
 
-        if (!string.IsNullOrWhiteSpace(query.Condition) &&
-            Enum.TryParse<ListingCondition>(query.Condition, true, out var condition))
+        if (!string.IsNullOrWhiteSpace(query.Condition))
         {
-            listings = listings.Where(x => x.Condition == condition);
+            var condition = query.Condition.Trim().ToUpperInvariant();
+            listings = listings.Where(x => x.Condition.ToUpper() == condition);
         }
 
         if (!string.IsNullOrWhiteSpace(query.Search))
@@ -153,7 +181,7 @@ public sealed class ListingsService : IListingsService
             .ToListAsync(cancellationToken);
 
         return new PagedListingsResponse(
-            items.Select(Map).ToList(),
+            items.Select(x => Map(x)).ToList(),
             page,
             pageSize,
             totalCount);
@@ -168,7 +196,192 @@ public sealed class ListingsService : IListingsService
             .OrderByDescending(x => x.CreatedAtUtc)
             .ToListAsync(cancellationToken);
 
-        return items.Select(Map).ToList();
+        return items.Select(x => Map(x)).ToList();
+    }
+
+    public async Task<IReadOnlyList<ListingResponse>> GetByIdsAsync(IReadOnlyList<Guid> listingIds, CancellationToken cancellationToken)
+    {
+        var ids = listingIds.Distinct().ToArray();
+        if (ids.Length == 0)
+        {
+            return Array.Empty<ListingResponse>();
+        }
+
+        var items = await _dbContext.Listings
+            .AsNoTracking()
+            .Include(x => x.Images)
+            .Where(x => ids.Contains(x.Id))
+            .ToListAsync(cancellationToken);
+
+        return items.Select(x => Map(x)).ToList();
+    }
+
+    public async Task<ListingResponse> UpdateStatusAsync(Guid ownerUserId, Guid listingId, UpdateListingStatusRequest request, CancellationToken cancellationToken)
+    {
+        var status = request.Status?.Trim().ToLowerInvariant() ?? string.Empty;
+        if (!AllowedStatuses.Contains(status))
+        {
+            throw new ListingsValidationException("Status must be available, traded, reserved, or unavailable.");
+        }
+
+        var listing = await _dbContext.Listings
+            .Include(x => x.Images)
+            .SingleOrDefaultAsync(x => x.Id == listingId, cancellationToken)
+            ?? throw new ListingsValidationException("Listing was not found.");
+
+        EnsureOwnership(ownerUserId, listing.OwnerUserId);
+        listing.SetStatus(status, _timeProvider.GetUtcNow());
+        await _dbContext.SaveChangesAsync(cancellationToken);
+
+        return Map(listing);
+    }
+
+    public async Task<FavouriteStateResponse> ToggleFavouriteAsync(Guid userId, Guid listingId, CancellationToken cancellationToken)
+    {
+        var existing = await _dbContext.ListingFavorites
+            .SingleOrDefaultAsync(x => x.UserId == userId && x.ListingId == listingId, cancellationToken);
+
+        if (existing is null)
+        {
+            await EnsureListingExistsAsync(listingId, cancellationToken);
+            _dbContext.ListingFavorites.Add(new ListingFavorite(userId, listingId, _timeProvider.GetUtcNow()));
+            await _dbContext.SaveChangesAsync(cancellationToken);
+            return new FavouriteStateResponse(listingId, true);
+        }
+
+        _dbContext.ListingFavorites.Remove(existing);
+        await _dbContext.SaveChangesAsync(cancellationToken);
+        return new FavouriteStateResponse(listingId, false);
+    }
+
+    public async Task AddFavouriteAsync(Guid userId, Guid listingId, CancellationToken cancellationToken)
+    {
+        var exists = await _dbContext.ListingFavorites
+            .AnyAsync(x => x.UserId == userId && x.ListingId == listingId, cancellationToken);
+
+        if (exists)
+        {
+            return;
+        }
+
+        await EnsureListingExistsAsync(listingId, cancellationToken);
+        _dbContext.ListingFavorites.Add(new ListingFavorite(userId, listingId, _timeProvider.GetUtcNow()));
+        await _dbContext.SaveChangesAsync(cancellationToken);
+    }
+
+    public async Task RemoveFavouriteAsync(Guid userId, Guid listingId, CancellationToken cancellationToken)
+    {
+        var existing = await _dbContext.ListingFavorites
+            .SingleOrDefaultAsync(x => x.UserId == userId && x.ListingId == listingId, cancellationToken);
+
+        if (existing is null)
+        {
+            return;
+        }
+
+        _dbContext.ListingFavorites.Remove(existing);
+        await _dbContext.SaveChangesAsync(cancellationToken);
+    }
+
+    public Task<bool> IsFavouriteAsync(Guid userId, Guid listingId, CancellationToken cancellationToken)
+    {
+        return _dbContext.ListingFavorites
+            .AnyAsync(x => x.UserId == userId && x.ListingId == listingId, cancellationToken);
+    }
+
+    public async Task<IReadOnlyList<ListingResponse>> GetFavouritesAsync(Guid userId, CancellationToken cancellationToken)
+    {
+        var listingIds = await _dbContext.ListingFavorites.AsNoTracking()
+            .Where(x => x.UserId == userId)
+            .Select(x => x.ListingId)
+            .ToListAsync(cancellationToken);
+
+        return await GetByIdsAsync(listingIds, cancellationToken);
+    }
+
+    public async Task IncrementViewAsync(Guid listingId, Guid userId, CancellationToken cancellationToken)
+    {
+        var listing = await _dbContext.Listings
+            .SingleOrDefaultAsync(x => x.Id == listingId, cancellationToken);
+
+        if (listing is null)
+        {
+            throw new ListingsValidationException("Listing was not found.");
+        }
+
+        var alreadyViewed = await _dbContext.ListingViews
+            .AnyAsync(x => x.ListingId == listingId && x.UserId == userId, cancellationToken);
+
+        if (alreadyViewed)
+        {
+            return;
+        }
+
+        _dbContext.ListingViews.Add(new ListingView(listingId, userId, _timeProvider.GetUtcNow()));
+        listing.IncrementViewCount();
+        await _dbContext.SaveChangesAsync(cancellationToken);
+    }
+
+    public async Task ReportAsync(Guid listingId, Guid userId, CancellationToken cancellationToken)
+    {
+        var exists = await _dbContext.ListingReports
+            .AnyAsync(x => x.ListingId == listingId && x.UserId == userId, cancellationToken);
+
+        if (exists)
+        {
+            return;
+        }
+
+        await EnsureListingExistsAsync(listingId, cancellationToken);
+        _dbContext.ListingReports.Add(new ListingReport(listingId, userId, _timeProvider.GetUtcNow()));
+        await _dbContext.SaveChangesAsync(cancellationToken);
+    }
+
+    private async Task EnsureListingExistsAsync(Guid listingId, CancellationToken cancellationToken)
+    {
+        var exists = await _dbContext.Listings.AnyAsync(x => x.Id == listingId, cancellationToken);
+        if (!exists)
+        {
+            throw new ListingsValidationException("Listing was not found.");
+        }
+    }
+
+    private static void ApplyProductDetails(
+        Listing listing,
+        string? ownerName,
+        string type,
+        string transactionType,
+        decimal? price,
+        string? desiredSwapCategory,
+        string? customCategory,
+        double? latitude,
+        double? longitude,
+        IReadOnlyList<string>? tags,
+        bool isOwnerPremium,
+        string? serviceCategory,
+        string? customServiceCategory,
+        int? estimatedDuration,
+        decimal? priceRange,
+        string? availabilitySchedule,
+        IReadOnlyList<string>? skills)
+    {
+        listing.SetProductDetails(
+            string.IsNullOrWhiteSpace(ownerName) ? null : ownerName.Trim(),
+            type,
+            transactionType,
+            price,
+            string.IsNullOrWhiteSpace(desiredSwapCategory) ? null : desiredSwapCategory.Trim(),
+            string.IsNullOrWhiteSpace(customCategory) ? null : customCategory.Trim(),
+            latitude,
+            longitude,
+            tags?.Where(t => !string.IsNullOrWhiteSpace(t)).Select(t => t.Trim()).Distinct().ToList(),
+            isOwnerPremium,
+            string.IsNullOrWhiteSpace(serviceCategory) ? null : serviceCategory.Trim(),
+            string.IsNullOrWhiteSpace(customServiceCategory) ? null : customServiceCategory.Trim(),
+            estimatedDuration,
+            priceRange,
+            string.IsNullOrWhiteSpace(availabilitySchedule) ? null : availabilitySchedule.Trim(),
+            skills?.Where(s => !string.IsNullOrWhiteSpace(s)).Select(s => s.Trim()).Distinct().ToList());
     }
 
     private static void EnsureOwnership(Guid currentUserId, Guid ownerUserId)
@@ -194,11 +407,7 @@ public sealed class ListingsService : IListingsService
         var normalizedDescription = NormalizeRequired(description, 2000, "Description");
         var normalizedCategory = NormalizeRequired(category, 100, "Category");
         var normalizedLocation = NormalizeRequired(location, 200, "Location");
-
-        if (!Enum.TryParse<ListingCondition>(condition, true, out var parsedCondition))
-        {
-            throw new ListingsValidationException("Condition must be 'New' or 'Used'.");
-        }
+        var normalizedCondition = NormalizeRequired(condition, 20, "Condition");
 
         if (!isAvailableForSale && !isAvailableForSwap)
         {
@@ -225,7 +434,7 @@ public sealed class ListingsService : IListingsService
             normalizedTitle,
             normalizedDescription,
             normalizedCategory,
-            parsedCondition,
+            normalizedCondition,
             normalizedLocation,
             askingPrice,
             isAvailableForSwap,
@@ -250,7 +459,11 @@ public sealed class ListingsService : IListingsService
         return normalized;
     }
 
-    private static ListingResponse Map(Listing listing)
+    private static ListingResponse Map(
+        Listing listing,
+        IReadOnlyList<Guid>? interestedUserIds = null,
+        IReadOnlyList<Guid>? viewedUserIds = null,
+        IReadOnlyList<Guid>? reportedByUserIds = null)
     {
         return new ListingResponse(
             listing.Id,
@@ -258,7 +471,7 @@ public sealed class ListingsService : IListingsService
             listing.Title,
             listing.Description,
             listing.Category,
-            listing.Condition.ToString(),
+            listing.Condition,
             listing.Location,
             listing.AskingPrice,
             listing.IsAvailableForSwap,
@@ -269,14 +482,35 @@ public sealed class ListingsService : IListingsService
             listing.Images
                 .OrderBy(x => x.SortOrder)
                 .Select(x => new ListingImageResponse(x.Url, x.SortOrder))
-                .ToList());
+                .ToList(),
+            OwnerName: listing.OwnerName,
+            Type: listing.Type,
+            Status: listing.Status,
+            TransactionType: listing.TransactionType,
+            Price: listing.Price,
+            DesiredSwapCategory: listing.DesiredSwapCategory,
+            CustomCategory: listing.CustomCategory,
+            Latitude: listing.Latitude,
+            Longitude: listing.Longitude,
+            Tags: listing.Tags.ToList(),
+            ViewCount: listing.ViewCount,
+            IsOwnerPremium: listing.IsOwnerPremium,
+            ServiceCategory: listing.ServiceCategory,
+            CustomServiceCategory: listing.CustomServiceCategory,
+            EstimatedDuration: listing.EstimatedDuration,
+            PriceRange: listing.PriceRange,
+            AvailabilitySchedule: listing.AvailabilitySchedule,
+            Skills: listing.Skills.ToList(),
+            InterestedUserIds: interestedUserIds ?? Array.Empty<Guid>(),
+            ViewedUserIds: viewedUserIds ?? Array.Empty<Guid>(),
+            ReportedByUserIds: reportedByUserIds ?? Array.Empty<Guid>());
     }
 
     private sealed record ListingWriteModel(
         string Title,
         string Description,
         string Category,
-        ListingCondition Condition,
+        string Condition,
         string Location,
         decimal? AskingPrice,
         bool IsAvailableForSwap,

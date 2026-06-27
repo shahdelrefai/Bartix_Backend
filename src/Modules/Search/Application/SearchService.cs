@@ -13,9 +13,17 @@ public sealed class SearchService : ISearchService
 
     public async Task<PagedSearchResponse> SearchAsync(SearchQuery query, CancellationToken cancellationToken)
     {
-        var page = query.Page <= 0 ? 1 : query.Page;
-        var pageSize = query.PageSize <= 0 ? 20 : Math.Min(query.PageSize, 100);
+        var page = query.Page.GetValueOrDefault(1) <= 0 ? 1 : query.Page.GetValueOrDefault(1);
+        var requestedPageSize = query.PageSize.GetValueOrDefault(20);
+        var pageSize = requestedPageSize <= 0 ? 20 : Math.Min(requestedPageSize, 100);
         var sourceType = ParseType(query.Type);
+
+        var sort = query.Sort?.Trim().ToLowerInvariant() switch
+        {
+            "price_asc" => "price_asc",
+            "price_desc" => "price_desc",
+            _ => "newest"
+        };
 
         var request = new SearchCatalogRequest(
             NormalizeOptional(query.Search, 200),
@@ -24,7 +32,11 @@ public sealed class SearchService : ISearchService
             sourceType,
             query.OwnerUserId,
             page,
-            pageSize);
+            pageSize,
+            query.MinPrice,
+            query.MaxPrice,
+            NormalizeOptional(query.Condition, 50),
+            sort);
 
         var result = await _catalogReader.SearchAsync(request, cancellationToken);
 

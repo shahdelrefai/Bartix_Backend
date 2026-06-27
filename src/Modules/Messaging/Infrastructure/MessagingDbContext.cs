@@ -28,7 +28,8 @@ public sealed class MessagingDbContext : DbContext
                 .WithOne(x => x.Conversation)
                 .HasForeignKey(x => x.ConversationId)
                 .OnDelete(DeleteBehavior.Cascade);
-            builder.HasIndex(x => x.TradeProposalId).IsUnique();
+            builder.HasIndex(x => x.TradeProposalId).IsUnique().HasFilter("trade_proposal_id IS NOT NULL");
+            builder.HasIndex(x => new { x.ParticipantAUserId, x.ParticipantBUserId });
             builder.HasIndex(x => x.ParticipantAUserId);
             builder.HasIndex(x => x.ParticipantBUserId);
         });
@@ -37,9 +38,21 @@ public sealed class MessagingDbContext : DbContext
         {
             builder.ToTable("conversation_messages");
             builder.HasKey(x => x.Id);
-            builder.Property(x => x.Body).HasMaxLength(2000).IsRequired();
+            builder.Property(x => x.Body).HasMaxLength(2000);
+            builder.Property(x => x.ImageUrl).HasMaxLength(500);
             builder.Property(x => x.CreatedAtUtc).IsRequired();
             builder.HasIndex(x => x.ConversationId);
         });
+    
+        ApplySnakeCaseColumnNames(modelBuilder);
+}
+    private static void ApplySnakeCaseColumnNames(ModelBuilder modelBuilder)
+    {
+        foreach (var entity in modelBuilder.Model.GetEntityTypes())
+            foreach (var property in entity.GetProperties())
+                property.SetColumnName(string.Concat(
+                    property.Name.Select((c, i) =>
+                        i > 0 && char.IsUpper(c) ? "_" + char.ToLower(c) : char.ToLower(c).ToString())));
     }
+
 }

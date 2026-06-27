@@ -12,6 +12,10 @@ public sealed class AuthDbContext : DbContext
 
     public DbSet<PhoneOtpChallenge> PhoneOtpChallenges => Set<PhoneOtpChallenge>();
 
+    public DbSet<BlockedUser> BlockedUsers => Set<BlockedUser>();
+
+    public DbSet<AdminWhitelistEntry> AdminWhitelist => Set<AdminWhitelistEntry>();
+
     public AuthDbContext(DbContextOptions<AuthDbContext> options) : base(options)
     {
     }
@@ -30,9 +34,28 @@ public sealed class AuthDbContext : DbContext
             builder.Property(x => x.DisplayName).HasMaxLength(200).IsRequired();
             builder.Property(x => x.PhoneNumber).HasMaxLength(32);
             builder.Property(x => x.NormalizedPhoneNumber).HasMaxLength(32);
+            builder.Property(x => x.Role).HasMaxLength(32).IsRequired();
+            builder.Property(x => x.LanguageCode).HasMaxLength(8).IsRequired();
+            builder.Property(x => x.ProfileImageUrl).HasMaxLength(500);
+            builder.Property(x => x.WalletBalance).HasColumnType("numeric(14,2)");
             builder.Property(x => x.CreatedAtUtc).IsRequired();
             builder.HasIndex(x => x.NormalizedEmail).IsUnique();
             builder.HasIndex(x => x.NormalizedPhoneNumber).IsUnique();
+        });
+
+        modelBuilder.Entity<BlockedUser>(builder =>
+        {
+            builder.ToTable("blocked_users");
+            builder.HasKey(x => new { x.UserId, x.BlockedUserId });
+            builder.Property(x => x.CreatedAtUtc).IsRequired();
+        });
+
+        modelBuilder.Entity<AdminWhitelistEntry>(builder =>
+        {
+            builder.ToTable("admin_whitelist");
+            builder.HasKey(x => x.NormalizedEmail);
+            builder.Property(x => x.NormalizedEmail).HasMaxLength(256);
+            builder.Property(x => x.AddedAtUtc).IsRequired();
         });
 
         modelBuilder.Entity<RefreshTokenSession>(builder =>
@@ -62,5 +85,16 @@ public sealed class AuthDbContext : DbContext
             builder.Property(x => x.ExpiresAtUtc).IsRequired();
             builder.HasIndex(x => new { x.NormalizedPhoneNumber, x.Purpose });
         });
+    
+        ApplySnakeCaseColumnNames(modelBuilder);
+}
+    private static void ApplySnakeCaseColumnNames(ModelBuilder modelBuilder)
+    {
+        foreach (var entity in modelBuilder.Model.GetEntityTypes())
+            foreach (var property in entity.GetProperties())
+                property.SetColumnName(string.Concat(
+                    property.Name.Select((c, i) =>
+                        i > 0 && char.IsUpper(c) ? "_" + char.ToLower(c) : char.ToLower(c).ToString())));
     }
+
 }

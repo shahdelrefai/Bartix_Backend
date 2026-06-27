@@ -67,6 +67,14 @@ public sealed class AuthDatabaseInitializer : IDatabaseInitializer
 
             CREATE INDEX IF NOT EXISTS ix_auth_phone_otp_challenges_phone_purpose
                 ON auth.phone_otp_challenges (normalized_phone_number, purpose);
+
+            ALTER TABLE auth.user_accounts ADD COLUMN IF NOT EXISTS role character varying(50) NOT NULL DEFAULT 'user';
+            ALTER TABLE auth.user_accounts ADD COLUMN IF NOT EXISTS is_suspended boolean NOT NULL DEFAULT false;
+            ALTER TABLE auth.user_accounts ADD COLUMN IF NOT EXISTS profile_image_url character varying(500) NULL;
+            ALTER TABLE auth.user_accounts ADD COLUMN IF NOT EXISTS is_premium_active boolean NOT NULL DEFAULT false;
+            ALTER TABLE auth.user_accounts ADD COLUMN IF NOT EXISTS premium_expires_at_utc timestamp with time zone NULL;
+            ALTER TABLE auth.user_accounts ADD COLUMN IF NOT EXISTS wallet_balance numeric(12,2) NOT NULL DEFAULT 0;
+            ALTER TABLE auth.user_accounts ADD COLUMN IF NOT EXISTS language_code character varying(10) NOT NULL DEFAULT 'en';
             """;
 
         await using var command = _dataSource.CreateCommand(sql);

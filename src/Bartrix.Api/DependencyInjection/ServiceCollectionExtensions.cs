@@ -2,17 +2,26 @@ using System.Text;
 using Bartrix.BuildingBlocks.Authentication;
 using Bartrix.BuildingBlocks.Persistence;
 using Bartrix.BuildingBlocks.Realtime;
-using Bartrix.BuildingBlocks.Storage;
+using Bartrix.Api.Media;
+using Bartrix.Modules.Admin.Infrastructure;
 using Bartrix.Modules.Auth.Infrastructure;
+using Bartrix.Modules.Categories.Infrastructure;
 using Bartrix.Modules.Delivery.Infrastructure;
 using Bartrix.Modules.Listings.Infrastructure;
 using Bartrix.Modules.Messaging.Application;
 using Bartrix.Modules.Messaging.Infrastructure;
+using Bartrix.Modules.Notifications.Application;
+using Bartrix.Modules.Notifications.Infrastructure;
+using Bartrix.Modules.Payments.Infrastructure;
 using Bartrix.Modules.Profiles.Infrastructure;
+using Bartrix.Modules.Reports.Infrastructure;
 using Bartrix.Modules.Reputation.Infrastructure;
 using Bartrix.Modules.Search.Infrastructure;
 using Bartrix.Modules.Services.Infrastructure;
 using Bartrix.Modules.Trades.Infrastructure;
+using Bartrix.Modules.Wallet.Application;
+using Bartrix.Modules.Wallet.Infrastructure;
+using Bartrix.Modules.Withdrawals.Infrastructure;
 using Bartrix.Api.Hubs;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -30,13 +39,16 @@ public static class ServiceCollectionExtensions
         services.AddProblemDetails();
         services.AddEndpointsApiExplorer();
         services.AddHealthChecks();
-        services.AddAuthorization();
+        services.AddAuthorization(options =>
+        {
+            options.AddPolicy("Admin", policy => policy.RequireRole("admin"));
+        });
         services.AddSingleton(TimeProvider.System);
 
         services.AddConfiguredOptions<JwtOptions>(configuration, JwtOptions.SectionName);
         services.AddConfiguredOptions<RefreshTokenOptions>(configuration, RefreshTokenOptions.SectionName);
         services.AddConfiguredOptions<OtpOptions>(configuration, OtpOptions.SectionName);
-        services.AddConfiguredOptions<MinioOptions>(configuration, MinioOptions.SectionName);
+        services.AddConfiguredOptions<S3Options>(configuration, S3Options.SectionName);
         services.AddConfiguredOptions<SignalROptions>(configuration, SignalROptions.SectionName);
 
         var databaseConnectionString = configuration.GetConnectionString("Database");
@@ -57,8 +69,8 @@ public static class ServiceCollectionExtensions
         });
 
         services.AddSingleton<IPostgresConnectionFactory, NpgsqlPostgresConnectionFactory>();
-        services.AddSingleton<IMinioClientFactory>(sp =>
-            new MinioClientFactory(sp.GetRequiredService<IOptions<MinioOptions>>().Value));
+        services.AddHttpContextAccessor();
+        services.AddSingleton<Bartrix.Api.Media.IMediaStorage, Bartrix.Api.Media.S3MediaStorage>();
 
         services
             .AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
@@ -84,15 +96,27 @@ public static class ServiceCollectionExtensions
 
         services.AddAuthModule();
         services.AddProfilesModule();
-        services.AddListingsModule();
+        services.AddListingsModule(configuration);
         services.AddTradesModule();
         services.AddMessagingModule();
         services.AddReputationModule();
         services.AddDeliveryModule();
         services.AddServicesModule();
         services.AddSearchModule();
+        services.AddNotificationsModule();
+        services.AddReportsModule();
+        services.AddCategoriesModule();
+        services.AddWalletModule();
+        services.AddWithdrawalsModule();
+        services.AddAdminModule();
+        services.AddPaymentsModule(configuration);
+
         services.Replace(ServiceDescriptor.Singleton<IConversationRealtimeNotifier>(sp =>
             new SignalRConversationRealtimeNotifier(sp.GetRequiredService<IHubContext<TradeChatHub>>())));
+        services.Replace(ServiceDescriptor.Singleton<INotificationRealtimeNotifier>(sp =>
+            new SignalRNotificationRealtimeNotifier(sp.GetRequiredService<IHubContext<TradeChatHub>>())));
+        services.Replace(ServiceDescriptor.Singleton<IWalletRealtimeNotifier>(sp =>
+            new SignalRWalletRealtimeNotifier(sp.GetRequiredService<IHubContext<TradeChatHub>>())));
 
         return services;
     }
@@ -115,21 +139,15 @@ public static class ServiceCollectionExtensions
         EnsureValue(options.SigningKey, $"{JwtOptions.SectionName}:SigningKey");
 
         if (options.AccessTokenMinutes <= 0)
-        {
             throw new InvalidOperationException($"{JwtOptions.SectionName}:AccessTokenMinutes must be greater than 0.");
-        }
 
         if (options.ClockSkewSeconds < 0)
-        {
             throw new InvalidOperationException($"{JwtOptions.SectionName}:ClockSkewSeconds cannot be negative.");
-        }
     }
 
     private static void EnsureValue(string? value, string settingName)
     {
         if (string.IsNullOrWhiteSpace(value))
-        {
             throw new InvalidOperationException($"Missing required configuration value '{settingName}'.");
-        }
     }
 }
