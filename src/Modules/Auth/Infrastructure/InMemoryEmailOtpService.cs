@@ -66,7 +66,8 @@ public sealed class InMemoryEmailOtpService : IEmailOtpService
 
     private string GenerateCode()
     {
-        if (string.Equals(_options.Provider, "LocalMock", StringComparison.OrdinalIgnoreCase))
+        if (string.Equals(_options.Provider, "LocalMock", StringComparison.OrdinalIgnoreCase)
+            && !string.IsNullOrWhiteSpace(_options.DevelopmentCode))
             return _options.DevelopmentCode;
 
         var maxValue = (int)Math.Pow(10, _options.CodeLength);
