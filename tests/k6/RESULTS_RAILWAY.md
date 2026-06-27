@@ -1,7 +1,7 @@
 # k6 Test Results — Railway Production
 
 **Date:** 2026-06-27  
-**Target:** `https://humble-education-production-60e4.up.railway.app`  
+**Target:** `https://bartixbackendapi-production.up.railway.app`  
 **Tool:** k6 v2.0.0  
 **Mode:** Smoke test — 1 VU × 1 iteration per flow
 
@@ -199,10 +199,10 @@ The Railway run has **more passing checks than the previous localhost run** beca
 
 ```bash
 cd tests/k6
-k6 run -e BASE_URL=https://humble-education-production-60e4.up.railway.app flows/01_auth.js
+k6 run -e BASE_URL=https://bartixbackendapi-production.up.railway.app flows/01_auth.js
 
 # All flows at once:
 for flow in flows/0*.js; do
-  k6 run -e BASE_URL=https://humble-education-production-60e4.up.railway.app "$flow"
+  k6 run -e BASE_URL=https://bartixbackendapi-production.up.railway.app "$flow"
 done
 ```

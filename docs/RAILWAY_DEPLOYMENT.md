@@ -4,7 +4,7 @@
 
 The Bartrix API is deployed on Railway at:
 
-**`https://humble-education-production-60e4.up.railway.app`**
+**`https://bartixbackendapi-production.up.railway.app`**
 
 - Platform: Railway (free tier)
 - Region: EU (Frankfurt)
@@ -129,14 +129,14 @@ railway login   # opens browser OAuth
 
 ```bash
 cd "Bartrix copy/"
-railway init    # creates project "humble-education" on Railway
-railway link --project humble-education
+railway init    # creates project "bartrix-api" on Railway
+railway link --project bartrix-api
 ```
 
 ### Step 4 — Initial Deploy
 
 ```bash
-railway up --detach --service humble-education
+railway up --detach --service bartrix_backend_api
 ```
 
 This uploads the local code, builds the Docker image on Railway, and starts the container.
@@ -163,7 +163,7 @@ curl -X POST https://backboard.railway.com/graphql/v2 \
 ### Step 7 — Generate Public Domain
 
 ```bash
-railway domain   # → https://humble-education-production-60e4.up.railway.app
+railway domain   # → https://bartixbackendapi-production.up.railway.app
 ```
 
 ### Step 8 — Auto-Deploy via GitHub Actions
@@ -260,15 +260,15 @@ In production the OTP is now a real random 6-digit code logged to Railway logs.
 
 ```bash
 # Health check
-curl https://humble-education-production-60e4.up.railway.app/health
+curl https://bartixbackendapi-production.up.railway.app/health
 # → Healthy
 
 # Service info
-curl https://humble-education-production-60e4.up.railway.app/
+curl https://bartixbackendapi-production.up.railway.app/
 # → {"service":"Bartrix.Api","status":"Running"}
 
 # Login
-curl -X POST https://humble-education-production-60e4.up.railway.app/api/auth/login \
+curl -X POST https://bartixbackendapi-production.up.railway.app/api/auth/login \
   -H "Content-Type: application/json" \
   -d '{"email":"...","password":"..."}'
 # → {"accessToken":"...","refreshToken":"..."}
@@ -280,12 +280,12 @@ curl -X POST https://humble-education-production-60e4.up.railway.app/api/auth/lo
 
 | Property | Value |
 |----------|-------|
-| Project name | `humble-education` |
+| Project name | `bartrix-api` |
 | Project ID | `b2550981-9b3c-4267-a109-9dc09915855f` |
 | Service name | `bartrix_backend_api` |
 | Service ID | `32e09c6f-5b61-42db-93e6-91873fb186a5` |
 | Environment | `production` |
 | Environment ID | `e2d96bb7-bbbd-44fe-b4f7-7194901ea1d6` |
-| Public URL | `https://humble-education-production-60e4.up.railway.app` |
+| Public URL | `https://bartixbackendapi-production.up.railway.app` |
 | GitHub repo | `github.com/shahdelrefai/Bartix_Backend` |
 | Auto-deploy branch | `main` (via GitHub Actions) |
